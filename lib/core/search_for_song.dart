@@ -6,6 +6,11 @@ import 'package:ma_music_app/custom_objects/song.dart';
 class Search {
 
   Future<List<Song>> searchForSong(String value) async {
+
+    if(value.isEmpty) {
+      return [];
+    }
+
     String url = "https://www.youtube.com/results?search_query=$value";
     var resp = await http.Client().get(Uri.parse(url));
 
