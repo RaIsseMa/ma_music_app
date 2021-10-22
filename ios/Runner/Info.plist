@@ -46,7 +46,7 @@
     <array>
     	<string>audio</string>
     </array>
-    	<key>NSAppTransportSecurity</key>
+    <key>NSAppTransportSecurity</key>
     <dict>
     	<key>NSAllowsArbitraryLoads</key>
     	<true/>

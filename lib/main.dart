@@ -1,10 +1,10 @@
 import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:ma_music_app/pages/search_page.dart';
-import 'package:ma_music_app/html_parse.dart';
+import 'package:ma_music_app/services/service_locator.dart';
 
-void main() {
+void main() async{
+  await setupServiceLocator();
   runApp(const MaterialApp(home: Start(),));
 }
 

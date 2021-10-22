@@ -1,9 +1,15 @@
 import 'dart:ui';
-import 'package:audio_manager/audio_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:ma_music_app/core/search_for_song.dart';
 import 'package:ma_music_app/custom_objects/song.dart';
 import 'package:ma_music_app/core/read_song.dart';
+import 'package:async/async.dart';
+import 'package:ma_music_app/resources/custom_colors.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:ma_music_app/custom_objects/track_player_status.dart';
+import 'package:get_it/get_it.dart';
+import 'package:ma_music_app/services/service_locator.dart';
+import 'package:ma_music_app/view_models/search_page_vm.dart';
 
 
 class SearchPage extends StatefulWidget {
@@ -11,6 +17,8 @@ class SearchPage extends StatefulWidget {
 
   @override
   _SearchPageState createState() => _SearchPageState();
+
+
 }
 
 class _SearchPageState extends State<SearchPage> {
@@ -21,38 +29,78 @@ class _SearchPageState extends State<SearchPage> {
     super.initState();
   }
 
+  var viewModel = getIt<SearchPageViewModel>();
+  var searchClass = Search();
+
   var searchQueryController = TextEditingController();
 
   List<Song> listOfSongs = [];
 
   Song? currentPlayingSong;
 
-  var audioManager = AudioManager.instance;
+  var isRefreshLoadNeeded = false;
+  var storeSearchQuery = "";
+  var isLoading = false;
+  var isTrackReady = false;
+  var isTrackUrlLoading = false;
 
-  double _slider = 0;
+  var panelOpacity = 0.0;
 
-  void searchSong() async{
+  String? changingPosition;
 
-    setState(() {
+  double? _slider;
 
-    });
-  }
+  //Audio settings
+
 
   void getTrackUrl(Song track) async{
     var url = await ReadSong().getSongSource(track);
+    isTrackUrlLoading = false;
     if(url == ""){
       return;
     }
 
-    currentPlayingSong = track;
-    currentPlayingSong!.setUrl(url);
+    print("song url = $url");
 
-    audioManager.start(
-        url,
-        currentPlayingSong!.title,
-        desc: "song",
-        cover: currentPlayingSong!.thumbnail360P)
-    .then((err) => print(err));
+    currentPlayingSong = track;
+    panelOpacity = 1.0;
+    _slider = 0;
+    setState((){});
+
+    var trackInfo = {
+      "id":url,
+      "title":currentPlayingSong!.title,
+      "thumbnail":Uri.parse(currentPlayingSong!.thumbnail360P),
+      "duration":Duration(
+        minutes: int.parse(currentPlayingSong!.duration.split(":")[0]),
+        seconds: int.parse(currentPlayingSong!.duration.split(":")[1])
+      )
+    };
+
+    viewModel.setAudioUrl(url,trackInfo);
+
+    /*setState(() {
+      playerStatus = PlayerStatus.buffering;
+    });
+    currentPlayingSong!.setUrl(url);
+    await audioPlayer.setUrl(url);
+    setState((){});
+    isTrackPlaying = true;
+    await audioPlayer.play();*/
+  }
+
+  loadData() async{
+    if(searchQueryController.text.isEmpty){
+      return;
+    }
+    setState(() {
+      isLoading = true;
+    });
+    listOfSongs = await searchClass.searchForSong(searchQueryController.text);
+    setState(() {
+      isLoading = false;
+    });
+
   }
 
   @override
@@ -73,9 +121,7 @@ class _SearchPageState extends State<SearchPage> {
             child: TextField(
               textInputAction: TextInputAction.search,
               onSubmitted: (value){
-                setState(() {
-                  //Search().searchForSong(value);
-                });
+                loadData();
               },
               controller: searchQueryController,
               style: const TextStyle(
@@ -84,7 +130,12 @@ class _SearchPageState extends State<SearchPage> {
               decoration: InputDecoration(
                 prefixIcon: IconButton(
                   icon: const Icon(Icons.search,color: Colors.white,),
-                  onPressed: searchSong,
+                  onPressed: (){
+                    isRefreshLoadNeeded = true;
+                    setState(() {
+
+                    });
+                  },
                 ),
                 suffixIcon: IconButton(
                   icon: const Icon(Icons.clear,color: Colors.white,),
@@ -110,130 +161,210 @@ class _SearchPageState extends State<SearchPage> {
                 color: Color(0xff272435)
             ),
           ),
+          isTrackUrlLoading? horizontalProgress() : Container(),
           loadSearchResult(), //Search results
-          bottomPanel()
+          bottomPanel(),
         ],
       ),
     );
   }
 
-  Widget loadSearchResult(){
-    return FutureBuilder(
-      future: Search().searchForSong(searchQueryController.text),
-        builder: (context,snapshot){
-          if(snapshot.connectionState == ConnectionState.waiting){
-            return const Center(
-              child: CircularProgressIndicator(
-                backgroundColor: Color(0xff272435),
-                valueColor: AlwaysStoppedAnimation(Color(0xffff2851)),
-              ),
-            );
-          }
-          if(snapshot.hasError){
-            return  Center(
-              child:Text(
-                "an error occurred while loading results",
-                style: TextStyle(
-                  color: Colors.grey[500],
-                  fontFamily: 'Roboto',
-                  fontSize: 10
-                ),
-              )
-            );
-          }
-          if(snapshot.data != null){
-            listOfSongs = snapshot.data as List<Song>;
-          }
-          if(listOfSongs.isEmpty){
-            return Container();
-          }
-          return ListView.builder(
-            itemCount: listOfSongs.length+2,
-            itemExtent: 80.0,
-            itemBuilder: (context,index){
-              return index>=listOfSongs.length?
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Color(0xff272435)
-                    ),
-                  ):
-                  listItem(index);
-            },
-          );
-        }
+  Widget horizontalProgress(){
+    return const LinearProgressIndicator(
+      valueColor: AlwaysStoppedAnimation(Color(0xffff2851)),
+      backgroundColor: Color(0xff272435),
     );
   }
 
-  Widget bottomPanel(){
-    return Align(
-      alignment: FractionalOffset.bottomCenter,
-      child: ClipRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(
-            sigmaY: 10.0,
-            sigmaX: 10.0
+  Widget loadSearchResult(){
+
+    if(isLoading){
+      return const Center(
+        child: CircularProgressIndicator(
+          backgroundColor: Color(0xff272435),
+          valueColor: AlwaysStoppedAnimation(Color(0xffff2851)),
+        ),
+      );
+    }
+
+    if(listOfSongs.isEmpty){
+      return Container();
+    }
+    return ListView.builder(
+      itemCount: listOfSongs.length+2,
+      itemExtent: 80.0,
+      itemBuilder: (context,index){
+        return index>=listOfSongs.length?
+        Container(
+          decoration: const BoxDecoration(
+              color: Color(0xff272435)
           ),
-          child: Container(
-            height: 120,
-            decoration: BoxDecoration(
-              color: Colors.red.withAlpha(10),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16),
+        ):
+        listItem(index);
+      },
+    );
+
+  }
+
+  String _formatDuration(Duration? d) {
+    if (d == null) return "--:--";
+    int minute = d.inMinutes;
+    int second = (d.inSeconds > 60) ? (d.inSeconds % 60) : d.inSeconds;
+    String format = ((minute < 10) ? "0$minute" : "$minute") +
+        ":" +
+        ((second < 10) ? "0$second" : "$second");
+    return format;
+  }
+  
+  Widget bottomPanel(){
+    return AnimatedOpacity(
+      opacity: panelOpacity,
+      duration: const Duration(milliseconds: 800),
+      curve: Curves.easeInToLinear,
+      child: ValueListenableBuilder<bool>(
+        valueListenable: viewModel.isTrackPlaying,
+        builder: (context,isTrackPlaying,_){
+          return Align(
+            alignment: FractionalOffset.bottomCenter,
+            child: ClipRect(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(
+                    sigmaY: 10.0,
+                    sigmaX: 10.0
                 ),
-                Container(
-                  padding: EdgeInsets.symmetric(vertical: 16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                child: Container(
+                  height: 120,
+                  decoration: BoxDecoration(
+                    color: Colors.red.withAlpha(10),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                      CircleAvatar(
-                        child: Center(
-                          child: IconButton(
-                            icon: Icon(
-                              Icons.skip_previous,
-                              color: Colors.white
-                            ),
-                            onPressed: (){},
-                          ),
-                        ),
+                      Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 16),
+                        child: songProgress(context,isTrackPlaying),
                       ),
-                      CircleAvatar(
-                        radius: 30,
-                        child: Center(
-                          child: IconButton(
-                            onPressed: (){
-                              audioManager.playOrPause();
-                            },
-                            icon: Icon(
-                              Icons.play_arrow,
-                              color: Colors.black,
+                      Container(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            CircleAvatar(
+                              backgroundColor: Colors.transparent,
+                              child: Center(
+                                child: IconButton(
+                                  icon: Icon(
+                                      Icons.skip_previous,
+                                      color: Colors.white
+                                  ),
+                                  onPressed: (){},
+                                ),
+                              ),
                             ),
-                            padding: const EdgeInsets.all(0.0),
-                          )
-                        ),
-                      ),
-                      CircleAvatar(
-                        child: Center(
-                          child: IconButton(
-                            onPressed: (){},
-                            icon: Icon(
-                              Icons.skip_next,
-                              color: Colors.white,
-                            ),
-                          ),
+                            actionPlay(isTrackPlaying),
+                            CircleAvatar(
+                              backgroundColor: Colors.transparent,
+                              child: Center(
+                                child: IconButton(
+                                  onPressed: (){},
+                                  icon: Icon(
+                                    Icons.skip_next,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            )
+                          ],
                         ),
                       )
                     ],
                   ),
-                )
-              ],
+                ),
+              ),
             ),
-          ),
-        ),
+          );
+        }
       ),
+    );
+  }
+
+  Widget songProgress(BuildContext context,bool isTrackPlaying){
+    var durationTextStyle = const TextStyle(color: Colors.white,fontFamily: 'Roboto');
+    var trackDuration = viewModel.getTrackDuration();
+    return ValueListenableBuilder(
+      valueListenable: viewModel.trackPosition,
+      builder: (context,position,_) {
+        if(viewModel.getTrackDuration() != null){
+          _slider =
+              (position as Duration).inMilliseconds / viewModel.getTrackDuration()!.inMilliseconds;
+          if (_slider! > 1.0) {
+            _slider = 1.0;
+          }
+        }
+        return Row(
+          children: [
+            Text(
+              changingPosition != null ? changingPosition! :_formatDuration(position as Duration),
+              style: durationTextStyle,
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 5),
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                      trackHeight: 2,
+                      thumbColor: accentColor,
+                      overlayColor: accentColor,
+                      thumbShape: const RoundSliderThumbShape(
+                          disabledThumbRadius: 5,
+                          enabledThumbRadius: 5
+                      ),
+                      overlayShape: const RoundSliderOverlayShape(
+                        overlayRadius: 10,
+                      ),
+                      activeTrackColor: accentColor,
+                      inactiveTrackColor: Colors.grey[500]
+                  ),
+                  child: Slider(
+                    value: _slider??0,
+                    onChanged: (value){
+                      setState(() {
+                        _slider = value;
+
+                        if(trackDuration != null){
+                          var msec = Duration(
+                              milliseconds: (trackDuration.inMilliseconds * value).round()
+                          );
+                          changingPosition = _formatDuration(msec);
+                        }
+                      });
+                    },
+                    onChangeEnd: (value){
+                      if(trackDuration != null){
+                        changingPosition = null;
+                        var msec = Duration(
+                            milliseconds: (trackDuration.inMilliseconds * value).round()
+                        );
+                        viewModel.seek(msec);
+                        if(isTrackPlaying) {
+                        viewModel.playTrack();
+                        }
+                      }
+                    },
+                    onChangeStart: (value){
+                      viewModel.tempPause();
+                    },
+                  ),
+                ),
+              ),
+            ),
+            Text(
+              currentPlayingSong == null ? "--:--":currentPlayingSong!.duration,
+              style: durationTextStyle,
+            )
+          ],
+        );
+      }
     );
   }
 
@@ -242,14 +373,18 @@ class _SearchPageState extends State<SearchPage> {
       padding: const EdgeInsets.symmetric(vertical: 0.0,horizontal: 4.0),
       child: Card(
         elevation: 0,
-        color: const Color(0xff272435),
+        color: backgroundColor,
         child: Material(
-          color: const Color(0xff272435),
+          color: backgroundColor,
           child: InkWell(
-            onTap: () async{
+            onTap: () {
+              setState(() {
+                isTrackUrlLoading = true;
+                viewModel.pauseTrack();
+              });
               getTrackUrl(listOfSongs[index]);
             },
-            splashColor: const Color(0xff0e0b1e).withAlpha(60),
+            splashColor: darkBackgroundColor.withAlpha(60),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(10, 0, 10, 0),
               child: Column(
@@ -311,7 +446,45 @@ class _SearchPageState extends State<SearchPage> {
     );
   }
 
-  void setupAudio(){
+  Widget actionPlay(bool isTrackPlaying){
+
+    return ValueListenableBuilder<PlayerStatus>(
+      valueListenable: viewModel.playerStatus,
+      builder: (context,playerStatus,_){
+        if(playerStatus == PlayerStatus.buffering){
+          return const Padding(
+            padding: EdgeInsets.all(14.0),
+            child: Center(
+              child: CircularProgressIndicator(
+                backgroundColor: Color(0xff272435),
+                valueColor: AlwaysStoppedAnimation(Color(0xffff2851)),
+              ),
+            ),
+          );
+        }
+
+        return ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              shape: const CircleBorder(),
+              primary: accentColor,
+            ),
+            onPressed: (){
+              print("             button play tap");
+              viewModel.toggleTrack();
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Icon(
+                isTrackPlaying? Icons.pause : Icons.play_arrow,
+                color: Colors.white,
+                size: 48,
+              ),
+            ));
+      }
+    );
+
 
   }
+
 }
+
